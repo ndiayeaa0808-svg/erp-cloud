@@ -1,0 +1,23 @@
+{
+  "name": "ERP Cloud Boutique Manager",
+  "short_name": "ERP Cloud",
+  "description": "ERP/POS multi-boutique avec synchronisation temps réel",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "fr",
+  "categories": ["business", "finance", "productivity"],
+  "icons": [
+    { "src": "/icons/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Caisse (POS)", "short_name": "Caisse", "url": "/pos", "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }] },
+    { "name": "Produits", "short_name": "Produits", "url": "/products", "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }] }
+  ]
+}
