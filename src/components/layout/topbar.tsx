@@ -12,7 +12,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { SyncIndicator } from "@/components/pwa/sync-indicator";
 import { Menu, Search, Sun, Moon, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -128,7 +127,6 @@ export function Topbar() {
             </div>
           </PopoverContent>
         </Popover>
-        <SyncIndicator />
         <Button variant="ghost" size="icon" onClick={toggleTheme}>
           {theme === "solarized-dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
