@@ -84,20 +84,16 @@ export default function SalesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const adjustStockForSale = async (sale: Sale, direction: "add" | "remove", shopId?: string) => {
+  const adjustStockForSale = async (sale: Sale, direction: "add" | "remove") => {
     if (!Array.isArray(sale.items)) return;
     for (const item of sale.items) {
       if (!item.product_id) continue;
       const multiplier = direction === "add" ? 1 : -1;
       const qty = (item.qty || 0) * multiplier;
-      const query = supabase.from("products").select("stock").eq("id", item.product_id);
-      if (shopId) query.eq("shop_id", shopId);
-      const { data: prod } = await query.single();
+      const { data: prod } = await supabase.from("products").select("stock").eq("id", item.product_id).single();
       if (prod) {
         const newStock = Math.max(0, (prod.stock || 0) + qty);
-        const upd = supabase.from("products").update({ stock: newStock }).eq("id", item.product_id);
-        if (shopId) upd.eq("shop_id", shopId);
-        await upd;
+        await supabase.from("products").update({ stock: newStock }).eq("id", item.product_id);
       }
     }
   };
@@ -127,7 +123,7 @@ export default function SalesPage() {
         await supabase.from("credits").delete().eq("id", credit.id).eq("shop_id", shopId);
       }
     }
-    await adjustStockForSale(sale as Sale, "add", shopId);
+    await adjustStockForSale(sale as Sale, "add");
     // Create refund entry if part of this sale was paid
     if ((sale.total || 0) > 0) {
       try {
@@ -155,7 +151,7 @@ export default function SalesPage() {
     if (!shopId) return;
     const { data: sale } = await supabase.from("sales").select("*").eq("id", saleId).eq("shop_id", shopId).single();
     if (sale) {
-      await adjustStockForSale(sale as Sale, "remove", shopId);
+      await adjustStockForSale(sale as Sale, "remove");
     }
     await supabase.from("sales").update({ deleted_at: null }).eq("id", saleId).eq("shop_id", shopId);
     load();

@@ -1,18 +1,13 @@
 import { createClient } from "@/lib/supabase/client";
 
 export async function verifyPin(userId: string, pin: string): Promise<boolean> {
-  try {
-    const res = await fetch("/api/auth/verify-pin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, pin }),
-    });
-    if (!res.ok) return false;
-    const { valid } = await res.json();
-    return valid === true;
-  } catch {
-    return false;
-  }
+  const supabase = createClient();
+  const { data } = await supabase
+    .from("users")
+    .select("pin")
+    .eq("id", userId)
+    .single();
+  return data?.pin === pin;
 }
 
 export async function getCurrentUser() {
@@ -30,44 +25,24 @@ export async function getCurrentUser() {
 export async function getShopId(): Promise<string | null> {
   const supabase = createClient();
   try {
+    // Toujours donner la priorité à la session Supabase (user_metadata)
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.user_metadata?.shop_id) {
       const sid = session.user.user_metadata.shop_id as string;
       if (typeof localStorage !== "undefined") localStorage.setItem("shop_id", sid);
       return sid;
     }
+    // Fallback : requête directe à la table users
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       const cached = typeof localStorage !== "undefined" ? localStorage.getItem("shop_id") : null;
       return cached;
     }
-    const fromMeta = user.user_metadata?.shop_id || user.app_metadata?.shop_id;
-    if (fromMeta) {
-      if (typeof localStorage !== "undefined") localStorage.setItem("shop_id", fromMeta);
-      return fromMeta;
-    }
-    const { data: u, error: userErr } = await supabase.from("users").select("shop_id").eq("id", user.id).single();
-    if (!userErr && u?.shop_id) {
+    const { data: u } = await supabase.from("users").select("shop_id").eq("id", user.id).single();
+    if (u?.shop_id) {
       if (typeof localStorage !== "undefined") localStorage.setItem("shop_id", u.shop_id);
       return u.shop_id;
     }
-    const cached = typeof localStorage !== "undefined" ? localStorage.getItem("shop_id") : null;
-    if (cached) return cached;
-    // Dernier recours : API avec clé service (bypass RLS)
-    try {
-      const res = await fetch("/api/auth/shop-id", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
-      if (res.ok) {
-        const { shopId } = await res.json();
-        if (shopId) {
-          if (typeof localStorage !== "undefined") localStorage.setItem("shop_id", shopId);
-          return shopId;
-        }
-      }
-    } catch {}
     return null;
   } catch {
     const cached = typeof localStorage !== "undefined" ? localStorage.getItem("shop_id") : null;

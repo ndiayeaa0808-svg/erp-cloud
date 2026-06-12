@@ -16,6 +16,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ERP Cloud — Boutique Manager",
   description: "Application de gestion de boutique ERP Cloud",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ERP Cloud",
+  },
 };
 
 export const viewport: Viewport = {
@@ -39,6 +45,7 @@ export default function RootLayout({
     >
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="apple-touch-icon" href="/icons/icon-180.png" />
       </head>
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>

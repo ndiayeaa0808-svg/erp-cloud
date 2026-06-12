@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
 import { getShopId, getShopInfo, getCurrentUser, logAudit, requirePinAction } from "@/lib/security";
+import { isOnline as checkIsOnline } from "@/lib/is-online";
 import {
   Search,
   Plus,
@@ -292,7 +293,7 @@ export default function POSPage() {
           continue;
         }
         const newStock = Math.max(0, (prod.stock || 0) - item.qty);
-        const { error: updErr } = await supabase.from("products").update({ stock: newStock }).eq("id", item.product_id).eq("shop_id", shopId);
+        const { error: updErr } = await supabase.from("products").update({ stock: newStock }).eq("id", item.product_id);
         if (updErr) stockErrors.push(`${item.product_name}: ${updErr.message}`);
       }
 
@@ -367,6 +368,34 @@ export default function POSPage() {
         setTimeout(() => setSuccess(false), 3000);
       }
     } catch (err: unknown) {
+      if (!(await checkIsOnline())) {
+        try {
+          const { checkoutOffline } = await import("@/lib/sync/pos-offline");
+          const result = await checkoutOffline({
+            cart: cart as CartItem[],
+            client: client || "",
+            clientPhone: clientPhone || "",
+            payment,
+            paymentType,
+            total: saleTotal,
+            paidAmount,
+            profit: saleProfit,
+            discount: discountFcfa,
+            vendor,
+            vendorId,
+            shopId,
+          });
+          if (result.success) {
+            setLastSale({ invoice: result.invoiceNumber!, client, clientPhone, total, paidAmount, remaining, payment, paymentType, items: [...cart], discount: discountFcfa });
+            setCart([]);
+            setClient(""); setClientPhone(""); setDiscountFcfa(0); setPaymentType("complet"); setMontantVerse(0);
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 3000);
+            setLoading(false);
+            return;
+          }
+        } catch {}
+      }
       setError(err instanceof Error ? err.message : "Erreur lors de la validation");
     } finally {
       setLoading(false);

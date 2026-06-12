@@ -181,7 +181,7 @@ export default function CreditsPage() {
       for (const item of edit.items) {
         const { data: prod } = await supabase.from("products").select("stock").eq("id", item.product_id).single();
         if (prod) {
-          await supabase.from("products").update({ stock: Math.max(0, (prod.stock || 0) - item.qty) }).eq("id", item.product_id).eq("shop_id", shopId);
+          await supabase.from("products").update({ stock: Math.max(0, (prod.stock || 0) - item.qty) }).eq("id", item.product_id);
         }
       }
     }
@@ -203,7 +203,7 @@ export default function CreditsPage() {
       for (const item of credit.items as { product_id: string; qty: number }[]) {
         const { data: prod } = await supabase.from("products").select("stock, name").eq("id", item.product_id).single();
         if (prod) {
-          await supabase.from("products").update({ stock: (prod.stock || 0) + item.qty }).eq("id", item.product_id).eq("shop_id", shopId);
+          await supabase.from("products").update({ stock: (prod.stock || 0) + item.qty }).eq("id", item.product_id);
           logAudit({ action: "restore_stock", entity: "credit", entity_id: deleteTarget!, data: { product_id: item.product_id, product_name: prod.name, qty: item.qty } });
         }
       }

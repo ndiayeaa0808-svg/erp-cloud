@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Info, Eye, EyeOff, LogIn, UserPlus, ExternalLink, CheckCircle2, Building2 } from "lucide-react";
+import { Info, Eye, EyeOff, LogIn, UserPlus, ExternalLink, CheckCircle2, Building2, WifiOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { hasValidConfig, getSupabaseConfig, storeConfig } from "@/lib/supabase/config";
+import { isOnlineSync } from "@/lib/is-online";
 
 export default function LoginPage() {
   const [configured, setConfigured] = useState(false);
@@ -34,8 +35,25 @@ export default function LoginPage() {
     setChecking(false);
   }, []);
 
+  const isElectron = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
+  const [isOnline, setIsOnline] = useState(isElectron || isOnlineSync());
+
+  useEffect(() => {
+    setIsOnline(isElectron || isOnlineSync());
+    if (isElectron) return;
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, [isElectron]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline && !isElectron) {
+      setError("Connexion Internet requise pour se connecter");
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -49,6 +67,7 @@ export default function LoginPage() {
       // Nettoyer toute session et cache précédents
       const supabase = createClient();
       await supabase.auth.signOut().catch(() => {});
+      localStorage.removeItem("shop_id");
 
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -63,11 +82,9 @@ export default function LoginPage() {
         return;
       }
 
-      // Forcer le shop_id dans le localStorage (après login réussi uniquement)
+      // Forcer le shop_id dans le localStorage
       if (data.user?.shop_id) {
         localStorage.setItem("shop_id", data.user.shop_id);
-      } else {
-        localStorage.removeItem("shop_id");
       }
 
       // Définir la nouvelle session
@@ -83,6 +100,10 @@ export default function LoginPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline && !isElectron) {
+      setError("Connexion Internet requise pour créer un compte");
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -251,6 +272,12 @@ export default function LoginPage() {
                   <li>Settings → API → copiez Project URL + anon public</li>
                 </ol>
               </div>
+            </div>
+          ) : !isOnline && !isElectron ? (
+            <div className="space-y-4 text-center py-6">
+              <WifiOff className="h-12 w-12 mx-auto text-red-400" />
+              <p className="text-muted-foreground">Connexion Internet requise</p>
+              <p className="text-xs text-muted-foreground">Vérifiez votre connexion puis réessayez.</p>
             </div>
           ) : mode === "login" ? (
             <form onSubmit={handleLogin} className="space-y-4">
