@@ -1,13 +1,18 @@
 import { createClient } from "@/lib/supabase/client";
 
 export async function verifyPin(userId: string, pin: string): Promise<boolean> {
-  const supabase = createClient();
-  const { data } = await supabase
-    .from("users")
-    .select("pin")
-    .eq("id", userId)
-    .single();
-  return data?.pin === pin;
+  try {
+    const res = await fetch("/api/auth/verify-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, pin }),
+    });
+    if (!res.ok) return false;
+    const { valid } = await res.json();
+    return valid === true;
+  } catch {
+    return false;
+  }
 }
 
 export async function getCurrentUser() {
