@@ -44,9 +44,11 @@ export interface Sale {
   invoice_number?: string;
   date: string;
   client?: string;
+  client_phone?: string | null;
   client_id?: string | null;
   type?: string;
   payment?: string;
+  payment_type?: string;
   total?: number;
   profit?: number;
   discount?: number;
@@ -58,6 +60,7 @@ export interface Sale {
   vendor_id?: string | null;
   note?: string;
   deleted_at?: string | null;
+  invoice_deleted_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -95,10 +98,12 @@ export interface Credit {
   id: string;
   shop_id: string;
   client: string;
+  client_phone?: string | null;
   client_id?: string | null;
   total?: number;
   paid?: number;
   payments?: CreditPayment[];
+  items?: { product_id: string; product_name: string; qty: number; price: number; total: number }[];
   date?: string;
   due?: string;
   status?: string;

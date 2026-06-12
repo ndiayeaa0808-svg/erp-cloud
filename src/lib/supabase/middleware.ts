@@ -25,6 +25,15 @@ export const updateSession = async (request: NextRequest) => {
     }
   );
 
+  // Skip auth check for API routes, RSC nav requests, and static files
+  if (
+    request.nextUrl.pathname.startsWith("/api/") ||
+    request.headers.get("RSC") === "1" ||
+    request.headers.get("Next-Router-Prefetch") === "1"
+  ) {
+    return supabaseResponse;
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -32,13 +41,13 @@ export const updateSession = async (request: NextRequest) => {
   if (!user && !request.nextUrl.pathname.startsWith("/login")) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return NextResponse.redirect(url, { status: 302 });
   }
 
   if (user && request.nextUrl.pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/";
-    return NextResponse.redirect(url);
+    return NextResponse.redirect(url, { status: 302 });
   }
 
   return supabaseResponse;

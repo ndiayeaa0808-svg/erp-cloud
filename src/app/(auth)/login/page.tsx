@@ -1,23 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Info, Eye, EyeOff, LogIn, UserPlus, ExternalLink, CheckCircle2, Building2 } from "lucide-react";
+import { Info, Eye, EyeOff, LogIn, UserPlus, ExternalLink, CheckCircle2, Building2, WifiOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { hasValidConfig, getSupabaseConfig, storeConfig } from "@/lib/supabase/config";
+import { isOnlineSync } from "@/lib/is-online";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [configured, setConfigured] = useState(false);
   const [checking, setChecking] = useState(true);
   const [mode, setMode] = useState<"login" | "register">("login");
 
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [shopName, setShopName] = useState("");
   const [fullName, setFullName] = useState("");
@@ -36,8 +35,25 @@ export default function LoginPage() {
     setChecking(false);
   }, []);
 
+  const isElectron = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
+  const [isOnline, setIsOnline] = useState(isElectron || isOnlineSync());
+
+  useEffect(() => {
+    setIsOnline(isElectron || isOnlineSync());
+    if (isElectron) return;
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, [isElectron]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline && !isElectron) {
+      setError("Connexion Internet requise pour se connecter");
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -48,21 +64,35 @@ export default function LoginPage() {
         return;
       }
 
+      // Nettoyer toute session et cache précédents
       const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      await supabase.auth.signOut().catch(() => {});
+      localStorage.removeItem("shop_id");
+
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login, password }),
       });
 
-      if (authError) {
-        setError(authError.message);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Erreur de connexion");
         return;
       }
 
-      router.push("/");
-      router.refresh();
+      // Forcer le shop_id dans le localStorage
+      if (data.user?.shop_id) {
+        localStorage.setItem("shop_id", data.user.shop_id);
+      }
+
+      // Définir la nouvelle session
+      await supabase.auth.setSession(data.session);
+
+      window.location.href = "/";
     } catch {
-      setError("Erreur de connexion au serveur. Vérifiez votre configuration Supabase.");
+      setError("Erreur de connexion au serveur");
     } finally {
       setLoading(false);
     }
@@ -70,6 +100,10 @@ export default function LoginPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline && !isElectron) {
+      setError("Connexion Internet requise pour créer un compte");
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -82,12 +116,12 @@ export default function LoginPage() {
 
       const supabase = createClient();
       const { error: signUpError } = await supabase.auth.signUp({
-        email,
+        email: `${login}@boutique.local`,
         password,
         options: {
           data: {
             shop_name: shopName || "Ma Boutique",
-            full_name: fullName || email.split("@")[0],
+            full_name: fullName || login,
           },
         },
       });
@@ -98,9 +132,9 @@ export default function LoginPage() {
       }
 
       setMode("login");
-      setError(null);
+      setError("Compte créé ! Connectez-vous avec vos identifiants.");
     } catch {
-      setError("Erreur d'inscription. Vérifiez votre configuration Supabase.");
+      setError("Erreur d'inscription");
     } finally {
       setLoading(false);
     }
@@ -239,18 +273,24 @@ export default function LoginPage() {
                 </ol>
               </div>
             </div>
+          ) : !isOnline && !isElectron ? (
+            <div className="space-y-4 text-center py-6">
+              <WifiOff className="h-12 w-12 mx-auto text-red-400" />
+              <p className="text-muted-foreground">Connexion Internet requise</p>
+              <p className="text-xs text-muted-foreground">Vérifiez votre connexion puis réessayez.</p>
+            </div>
           ) : mode === "login" ? (
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="login">Identifiant</Label>
                 <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@boutique.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="login"
+                  type="text"
+                  placeholder="admin"
+                  value={login}
+                  onChange={(e) => setLogin(e.target.value)}
                   required
-                  autoComplete="email"
+                  autoComplete="username"
                 />
               </div>
 
@@ -322,13 +362,13 @@ export default function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="regEmail">Email</Label>
+                <Label htmlFor="regLogin">Identifiant</Label>
                 <Input
-                  id="regEmail"
-                  type="email"
-                  placeholder="admin@boutique.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="regLogin"
+                  type="text"
+                  placeholder="admin"
+                  value={login}
+                  onChange={(e) => setLogin(e.target.value)}
                   required
                 />
               </div>

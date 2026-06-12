@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useRequirePermission } from "@/lib/use-permission";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,10 +20,22 @@ import {
   Check,
   Eye,
   EyeOff,
+  RefreshCw,
+  Smartphone,
+  Trash2,
+  Cloud,
+  CloudOff,
+  Clock,
+  AlertTriangle,
 } from "lucide-react";
+import { useSync } from "@/lib/sync/sync-context";
+import { getPendingWrites, removePendingWrite, getCachedProducts, getCachedClients } from "@/lib/sync/db";
+import { tryRetryPendingWrite, refreshCache } from "@/lib/sync/sync";
 import type { Shop } from "@/types";
+import type { PendingWrite, CachedProduct, CachedClient } from "@/lib/sync/db";
 
 export default function SettingsPage() {
+  useRequirePermission("settings");
   const [shop, setShop] = useState<Shop | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -33,7 +46,7 @@ export default function SettingsPage() {
   const [showPin, setShowPin] = useState(false);
   const [pinError, setPinError] = useState("");
   const [pinSuccess, setPinSuccess] = useState(false);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
     const shopId = await getShopId();
@@ -67,9 +80,8 @@ export default function SettingsPage() {
     if (!file || !shop) return;
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("upload_preset", "erp_products");
     try {
-      const res = await fetch("https://api.cloudinary.com/v1_1/demo/image/upload", { method: "POST", body: formData });
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
       const data = await res.json();
       if (data.secure_url) {
         await supabase.from("shops").update({ logo: data.secure_url }).eq("id", shop.id);
@@ -95,7 +107,10 @@ export default function SettingsPage() {
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem("shop_id");
+    try {
+      await supabase.auth.signOut();
+    } catch {}
     window.location.href = "/login";
   };
 
@@ -116,6 +131,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="shop"><Building className="h-4 w-4 mr-1" /> Boutique</TabsTrigger>
           <TabsTrigger value="security"><Lock className="h-4 w-4 mr-1" /> Sécurité</TabsTrigger>
+          <TabsTrigger value="sync"><Smartphone className="h-4 w-4 mr-1" /> PWA & Sync</TabsTrigger>
         </TabsList>
 
         <TabsContent value="shop" className="space-y-4 mt-4">
@@ -238,10 +254,6 @@ export default function SettingsPage() {
                   <span>Suppression vente</span>
                   <Lock className="h-3 w-3 text-amber-500" />
                 </div>
-                <div className="flex items-center justify-between py-1 border-b">
-                  <span>Fermeture de caisse</span>
-                  <Lock className="h-3 w-3 text-amber-500" />
-                </div>
                 <div className="flex items-center justify-between py-1">
                   <span>Paramètres système</span>
                   <Lock className="h-3 w-3 text-amber-500" />
@@ -259,7 +271,185 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="sync" className="space-y-4 mt-4">
+          <SyncTabContent />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function SyncTabContent() {
+  const { status, pendingCount, lastSyncTime, isOnline, triggerSync } = useSync();
+  const [writes, setWrites] = useState<PendingWrite[]>([]);
+  const [cachedProducts, setCachedProducts] = useState<CachedProduct[]>([]);
+  const [cachedClients, setCachedClients] = useState<CachedClient[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadData();
+  }, [status]);
+
+  const loadData = async () => {
+    const [w, p, c] = await Promise.all([
+      getPendingWrites(),
+      getCachedProducts(),
+      getCachedClients(),
+    ]);
+    setWrites(w);
+    setCachedProducts(p);
+    setCachedClients(c);
+  };
+
+  const handleForceSync = async () => {
+    triggerSync();
+    setTimeout(loadData, 2000);
+  };
+
+  const handleRetry = async (id: number) => {
+    await tryRetryPendingWrite(id);
+    loadData();
+  };
+
+  const handleDeleteWrite = async (id: number) => {
+    await removePendingWrite(id);
+    loadData();
+  };
+
+  const handleRefreshCache = async () => {
+    setRefreshing(true);
+    await refreshCache();
+    loadData();
+    setRefreshing(false);
+  };
+
+  const formatDate = (d: string) => {
+    try {
+      return new Date(d).toLocaleString("fr-FR");
+    } catch {
+      return d;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <RefreshCw className="h-4 w-4" /> Statut de la synchronisation
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              {isOnline ? (
+                <Cloud className="h-4 w-4 text-emerald-500" />
+              ) : (
+                <CloudOff className="h-4 w-4 text-red-500" />
+              )}
+              <span>{isOnline ? "Connecté" : "Hors-ligne"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {status === "idle" ? (
+                <Check className="h-4 w-4 text-emerald-500" />
+              ) : status === "syncing" ? (
+                <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
+              ) : status === "error" ? (
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+              ) : (
+                <Clock className="h-4 w-4 text-amber-500" />
+              )}
+              <span>
+                {status === "idle" ? "Synchronisé" : status === "syncing" ? "En cours..." : status === "error" ? "Erreur" : "En attente"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              <span>{lastSyncTime ? formatDate(lastSyncTime) : "Jamais"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+              <span>{pendingCount} écriture(s) en attente</span>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button size="sm" onClick={handleForceSync} disabled={!isOnline || status === "syncing"}>
+              <RefreshCw className={`h-3 w-3 mr-1 ${status === "syncing" ? "animate-spin" : ""}`} />
+              Forcer la sync
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Smartphone className="h-4 w-4" /> Cache local
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+            <div>Produits en cache: <strong>{cachedProducts.length}</strong></div>
+            <div>Clients en cache: <strong>{cachedClients.length}</strong></div>
+          </div>
+          <Button size="sm" onClick={handleRefreshCache} disabled={refreshing || !isOnline}>
+            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            Mettre à jour le cache
+          </Button>
+        </CardContent>
+      </Card>
+
+      {writes.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4" /> Écritures en attente ({writes.length})
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Ces écritures seront rejouées automatiquement lors de la prochaine synchronisation.
+            </p>
+          </CardHeader>
+          <CardContent className="max-h-80 overflow-y-auto">
+            <div className="space-y-2">
+              {writes.map((w) => (
+                <div key={w.id} className="flex items-start justify-between gap-2 rounded-lg border p-3 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        w.action === "create" ? "bg-emerald-500/10 text-emerald-600" :
+                        w.action === "update" ? "bg-amber-500/10 text-amber-600" :
+                        "bg-red-500/10 text-red-600"
+                      }`}>
+                        {w.action}
+                      </span>
+                      <span className="font-medium">{w.table}</span>
+                      <span className="text-muted-foreground text-[10px]">#{w.id}</span>
+                      <span className="text-muted-foreground text-[10px]">{formatDate(w.createdAt)}</span>
+                    </div>
+                    {w.lastError && (
+                      <p className="text-xs text-red-500 mt-1 truncate" title={w.lastError}>
+                        Erreur: {w.lastError}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Tentatives: {w.retries}/{5}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => handleRetry(w.id!)} title="Réessayer">
+                      <RefreshCw className="h-3 w-3" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={() => handleDeleteWrite(w.id!)} title="Supprimer">
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

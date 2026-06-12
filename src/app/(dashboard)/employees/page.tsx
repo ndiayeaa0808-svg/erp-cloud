@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { getShopId } from "@/lib/security";
 import { Plus, Search, Pencil, Trash2, Users } from "lucide-react";
 import type { Employee } from "@/types";
 
@@ -41,11 +42,12 @@ export default function EmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<Partial<Employee>>({});
   const [open, setOpen] = useState(false);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from("employees").select("*").order("name");
+    const shopId = await getShopId();
+    let q = supabase.from("employees").select("*").eq("shop_id", shopId).order("name");
     if (search) q = q.ilike("name", `%${search}%`);
     const { data } = await q;
     if (data) setEmployees(data as Employee[]);
@@ -56,10 +58,11 @@ export default function EmployeesPage() {
 
   const save = async () => {
     try {
+      const shopId = await getShopId();
       if (edit.id) {
-        await supabase.from("employees").update(edit).eq("id", edit.id);
+        await supabase.from("employees").update(edit).eq("id", edit.id).eq("shop_id", shopId);
       } else {
-        await supabase.from("employees").insert({ ...edit, id: crypto.randomUUID() });
+        await supabase.from("employees").insert({ ...edit, id: crypto.randomUUID(), shop_id: shopId });
       }
       setOpen(false);
       setEdit({});
@@ -68,7 +71,8 @@ export default function EmployeesPage() {
   };
 
   const remove = async (id: string) => {
-    await supabase.from("employees").delete().eq("id", id);
+    const shopId = await getShopId();
+    await supabase.from("employees").delete().eq("id", id).eq("shop_id", shopId);
     load();
   };
 

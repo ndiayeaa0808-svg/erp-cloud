@@ -149,3 +149,73 @@ GRANT SELECT ON audit_logs TO anon;
 -- VERIFY
 -- ════════════════════════════════════════
 SELECT 'Migration complete' AS status;
+
+-- Add client_phone column to sales
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_phone TEXT;
+
+-- Add invoice_deleted_at for independent invoice deletion
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS invoice_deleted_at TIMESTAMPTZ;
+
+-- Add payment_type column (complet, pret, partiel)
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_type TEXT DEFAULT 'complet';
+
+-- Add client_phone column to credits
+ALTER TABLE credits ADD COLUMN IF NOT EXISTS client_phone TEXT;
+
+-- Add items column to credits (JSONB for product tracking)
+ALTER TABLE credits ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]';
+
+-- Adjust stock function (used by POS and stock adjustments)
+CREATE OR REPLACE FUNCTION public.adjust_stock(
+  p_product_id UUID,
+  p_qty_change NUMERIC,
+  p_shop_id UUID
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  UPDATE products
+  SET stock = GREATEST(0, COALESCE(stock, 0) + p_qty_change),
+      updated_at = NOW()
+  WHERE id = p_product_id AND shop_id = p_shop_id;
+END;
+$$;
+
+-- Decrement stock function (simpler fallback)
+CREATE OR REPLACE FUNCTION public.decrement_stock(
+  p_product_id UUID,
+  p_qty NUMERIC
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  UPDATE products
+  SET stock = GREATEST(0, COALESCE(stock, 0) - p_qty),
+      updated_at = NOW()
+  WHERE id = p_product_id;
+END;
+$$;
+
+-- Increment stock function (for sale restoration)
+CREATE OR REPLACE FUNCTION public.increment_stock(
+  p_product_id UUID,
+  p_qty NUMERIC
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  UPDATE products
+  SET stock = COALESCE(stock, 0) + p_qty,
+      updated_at = NOW()
+  WHERE id = p_product_id;
+END;
+$$;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useRequirePermission } from "@/lib/use-permission";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,7 +41,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createClient } from "@/lib/supabase/client";
-import { getShopId, requirePinAction } from "@/lib/security";
+import { getShopId, requirePinAction, logAudit } from "@/lib/security";
 import {
   Plus,
   Search,
@@ -59,6 +60,7 @@ import type { Product } from "@/types";
 import { cn } from "@/lib/utils";
 
 export default function ProductsPage() {
+  useRequirePermission("products");
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -71,14 +73,14 @@ export default function ProductsPage() {
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
-  const [stockAdjust, setStockAdjust] = useState<{ id: string; name: string; qty: number } | null>(null);
+  const [stockAdjust, setStockAdjust] = useState<{ id: string; name: string; currentStock: number; mode: "add" | "remove"; qty: number; description: string; pin: string; pinError: boolean } | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [catDialog, setCatDialog] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [activeTab, setActiveTab] = useState("produits");
   const [productHistory, setProductHistory] = useState<{ id: string; name: string; action: string; date: string }[]>([]);
   const [historyDialog, setHistoryDialog] = useState(false);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -88,7 +90,8 @@ export default function ProductsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from("products").select("*").is("deleted_at", null).order("name");
+    const shopId = await getShopId();
+    let q = supabase.from("products").select("*").is("deleted_at", null).eq("shop_id", shopId).order("name");
     if (search) q = q.ilike("name", `%${search}%`);
     if (categoryFilter) q = q.eq("cat", categoryFilter);
     const { data } = await q;
@@ -102,12 +105,17 @@ export default function ProductsPage() {
 
   const save = async () => {
     setError(null);
+    const shopId = await getShopId();
+    if (!shopId) { setError("Aucune boutique associée à ce compte"); return; }
     try {
-      const shopId = await getShopId();
       if (edit.id) {
-        await supabase.from("products").update(edit).eq("id", edit.id);
+        const { id: _id, created_at: _ca, updated_at: _ua, ...clean } = edit;
+        await supabase.from("products").update(clean).eq("id", edit.id).eq("shop_id", shopId);
+        logAudit({ action: "update_product", entity: "products", entity_id: edit.id });
       } else {
-        await supabase.from("products").insert({ ...edit, id: crypto.randomUUID(), shop_id: shopId });
+        const newId = crypto.randomUUID();
+        await supabase.from("products").insert({ ...edit, id: newId, shop_id: shopId });
+        logAudit({ action: "create_product", entity: "products", entity_id: newId, data: { name: edit.name } });
       }
       setOpen(false);
       setEdit({});
@@ -118,23 +126,43 @@ export default function ProductsPage() {
   };
 
   const handlePinAction = async () => {
-    const valid = await requirePinAction(currentUserId, pinInput, pinDialog.action === "delete" ? "delete_product" : pinDialog.action === "stock" ? "adjust_stock" : "edit_product", "product", pinDialog.id);
-    if (valid) {
-      setPinInput("");
-      setPinError(false);
-      setPinDialog({ open: false, action: "edit" });
-      if (pinDialog.action === "delete" && pinDialog.id) {
-        await supabase.from("products").update({ deleted_at: new Date().toISOString() }).eq("id", pinDialog.id);
-        load();
+    try {
+      const action = pinDialog.action === "delete" ? "delete_product" : pinDialog.action === "stock" ? "adjust_stock" : "edit_product";
+      const valid = await requirePinAction(currentUserId, pinInput, action, "product", pinDialog.id);
+      if (valid) {
+        setPinInput("");
+        setPinError(false);
+        setPinDialog({ open: false, action: "edit" });
+        if (pinDialog.action === "delete" && pinDialog.id) {
+          const shopId = await getShopId();
+          if (!shopId) return;
+          await supabase.from("products").update({ deleted_at: new Date().toISOString() }).eq("id", pinDialog.id).eq("shop_id", shopId);
+          load();
+        }
+      } else {
+        setPinError(true);
       }
-      if (pinDialog.action === "stock" && stockAdjust) {
-        await supabase.from("products").update({ stock: stockAdjust.qty }).eq("id", stockAdjust.id);
+    } catch {}
+  };
+
+  const handleStockAdjust = async () => {
+    if (!stockAdjust) return;
+    try {
+      const valid = await requirePinAction(currentUserId, stockAdjust.pin, "adjust_stock", "product", stockAdjust.id);
+      if (valid) {
+        const shopId = await getShopId();
+        if (!shopId) return;
+        const newStock = stockAdjust.mode === "add"
+          ? (stockAdjust.currentStock + stockAdjust.qty)
+          : Math.max(0, stockAdjust.currentStock - stockAdjust.qty);
+        await supabase.from("products").update({ stock: newStock }).eq("id", stockAdjust.id).eq("shop_id", shopId);
+        logAudit({ action: "adjust_stock", entity: "products", entity_id: stockAdjust.id, data: { mode: stockAdjust.mode, qty: stockAdjust.qty, from: stockAdjust.currentStock, to: newStock, description: stockAdjust.description } });
         setStockAdjust(null);
         load();
+      } else {
+        setStockAdjust((prev) => prev ? { ...prev, pinError: true } : null);
       }
-    } else {
-      setPinError(true);
-    }
+    } catch {}
   };
 
   const confirmDelete = (id: string) => {
@@ -142,8 +170,7 @@ export default function ProductsPage() {
   };
 
   const confirmStockAdjust = (product: Product) => {
-    setStockAdjust({ id: product.id, name: product.name, qty: product.stock || 0 });
-    setPinDialog({ open: true, action: "stock", id: product.id });
+    setStockAdjust({ id: product.id, name: product.name, currentStock: product.stock || 0, mode: "add", qty: 1, description: "", pin: "", pinError: false });
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,14 +178,11 @@ export default function ProductsPage() {
     if (!file) return;
     const formData = new FormData();
     formData.append("file", file);
-    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "demo";
-    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "erp_products";
-    formData.append("upload_preset", uploadPreset);
     try {
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: "POST", body: formData });
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
       const data = await res.json();
       if (data.secure_url) setEdit((prev) => ({ ...prev, photo: data.secure_url }));
-      else if (data.error) setError(data.error.message);
+      else setError(data.error || "Erreur upload");
     } catch {
       setError("Erreur lors de l'upload de l'image");
     }
@@ -256,8 +280,17 @@ export default function ProductsPage() {
                 </div>
                 <div>
                   <Label>Stock</Label>
-                  <Input type="number" value={edit.stock || 0} onChange={(e) => setEdit({ ...edit, stock: Number(e.target.value) })} />
+                  <Input type="number" value={edit.stock || 0} disabled={!!edit.id} className={edit.id ? "opacity-60" : ""} />
+                  {edit.id && <p className="text-xs text-muted-foreground mt-1">Utilisez le bouton <strong>réajustement</strong> pour modifier le stock</p>}
                 </div>
+                {edit.id && (
+                  <div className="col-span-2 rounded-lg border bg-muted/30 p-3 space-y-1 text-xs">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Coût total du stock</span><span className="font-medium">{((edit.stock || 0) * (edit.cost || 0)).toLocaleString()} FCFA</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Vente potentielle</span><span className="font-medium">{((edit.stock || 0) * (edit.retail || 0)).toLocaleString()} FCFA</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Marge unitaire</span><span className="font-medium text-emerald-500">{((edit.retail || 0) - (edit.cost || 0)).toLocaleString()} FCFA</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Marge totale potentielle</span><span className="font-medium text-emerald-500">{((edit.stock || 0) * ((edit.retail || 0) - (edit.cost || 0))).toLocaleString()} FCFA</span></div>
+                  </div>
+                )}
                 <div>
                   <Label>Seuil alerte</Label>
                   <Input type="number" value={edit.threshold || 5} onChange={(e) => setEdit({ ...edit, threshold: Number(e.target.value) })} />
@@ -291,6 +324,25 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <div className="rounded-lg border bg-card p-2">
+          <p className="text-xs text-muted-foreground">Valeur du stock</p>
+          <p className="font-bold">{(products || []).reduce((s, p) => s + ((p.cost || 0) * (p.stock || 0)), 0).toLocaleString()} FCFA</p>
+        </div>
+        <div className="rounded-lg border bg-card p-2">
+          <p className="text-xs text-muted-foreground">Produits</p>
+          <p className="font-bold">{(products || []).length}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-2">
+          <p className="text-xs text-muted-foreground">Catégories</p>
+          <p className="font-bold">{categories.length}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-2">
+          <p className="text-xs text-muted-foreground">Stock bas</p>
+          <p className="font-bold text-red-400">{(products || []).filter((p) => (p.stock || 0) <= (p.threshold || 10)).length}</p>
+        </div>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -321,14 +373,17 @@ export default function ProductsPage() {
                 <TableHead className="text-right">Prix gros</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
                 <TableHead className="text-right">Seuil</TableHead>
+                <TableHead className="text-right">Coût total</TableHead>
+                <TableHead className="text-right">Vente potentielle</TableHead>
+                <TableHead className="text-right">Marge</TableHead>
                 <TableHead className="w-24">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Chargement...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">Chargement...</TableCell></TableRow>
               ) : products.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                   <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   Aucun produit
                 </TableCell></TableRow>
@@ -351,6 +406,9 @@ export default function ProductsPage() {
                     {p.stock}
                   </TableCell>
                   <TableCell className="text-right">{p.threshold}</TableCell>
+                  <TableCell className="text-right text-xs">{((p.stock || 0) * (p.cost || 0)).toLocaleString()} FCFA</TableCell>
+                  <TableCell className="text-right text-xs">{((p.stock || 0) * (p.retail || 0)).toLocaleString()} FCFA</TableCell>
+                  <TableCell className="text-right text-xs text-emerald-500">{((p.stock || 0) * ((p.retail || 0) - (p.cost || 0))).toLocaleString()} FCFA</TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(p)}>
@@ -439,13 +497,41 @@ export default function ProductsPage() {
       </Dialog>
 
       {stockAdjust && (
-        <Dialog open={!!stockAdjust && pinDialog.action === "stock"} onOpenChange={(v) => { if (!v) setStockAdjust(null); }}>
+        <Dialog open={!!stockAdjust} onOpenChange={(v) => { if (!v) setStockAdjust(null); }}>
           <DialogContent>
             <DialogHeader><DialogTitle>Ajuster le stock</DialogTitle></DialogHeader>
-            <p className="text-sm text-muted-foreground">Produit: <strong>{stockAdjust?.name}</strong></p>
-            <div className="space-y-2">
-              <Label>Nouvelle quantité</Label>
-              <Input type="number" value={stockAdjust?.qty || 0} onChange={(e) => setStockAdjust((prev) => prev ? { ...prev, qty: Number(e.target.value) } : null)} />
+            <p className="text-sm">Produit: <strong>{stockAdjust.name}</strong></p>
+            <p className="text-xs text-muted-foreground mb-3">Stock actuel: <strong>{stockAdjust.currentStock}</strong></p>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <Button type="button" variant={stockAdjust.mode === "add" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setStockAdjust({ ...stockAdjust, mode: "add", pinError: false })}>
+                  + Ajouter
+                </Button>
+                <Button type="button" variant={stockAdjust.mode === "remove" ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setStockAdjust({ ...stockAdjust, mode: "remove", pinError: false })}>
+                  - Retirer
+                </Button>
+              </div>
+              <div>
+                <Label>Quantité</Label>
+                <Input type="number" min={1} value={stockAdjust.qty} onChange={(e) => setStockAdjust({ ...stockAdjust, qty: Math.max(1, Number(e.target.value)), pinError: false })} />
+              </div>
+              <div>
+                <Label>Description (motif)</Label>
+                <textarea
+                  className="flex min-h-[60px] w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
+                  value={stockAdjust.description}
+                  onChange={(e) => setStockAdjust({ ...stockAdjust, description: e.target.value, pinError: false })}
+                />
+              </div>
+              <div className="border-t pt-3">
+                <Label>Code secret</Label>
+                <Input type="password" placeholder="Entrez votre code secret" value={stockAdjust.pin} maxLength={6} className="text-center text-lg tracking-widest mt-1" onChange={(e) => setStockAdjust({ ...stockAdjust, pin: e.target.value, pinError: false })} />
+                {stockAdjust.pinError && <p className="text-sm text-red-500 mt-1">Mot de passe incorrect</p>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Nouveau stock: <strong>{stockAdjust.mode === "add" ? stockAdjust.currentStock + stockAdjust.qty : Math.max(0, stockAdjust.currentStock - stockAdjust.qty)}</strong>
+              </p>
+              <Button onClick={handleStockAdjust} className="w-full" disabled={!stockAdjust.pin}>Confirmer l'ajustement</Button>
             </div>
           </DialogContent>
         </Dialog>

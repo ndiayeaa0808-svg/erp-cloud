@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,6 @@ import {
   Receipt,
   BarChart3,
   UserCog,
-  ClipboardList,
   Settings,
   Users2,
   ChevronLeft,
@@ -26,28 +26,56 @@ import {
   Calculator,
 } from "lucide-react";
 
-const navItems = [
-  { label: "Tableau de bord", href: "/", icon: LayoutDashboard },
-  { label: "Caisse POS", href: "/pos", icon: ShoppingCart },
-  { label: "Produits", href: "/products", icon: Package },
-  { label: "Ventes", href: "/sales", icon: DollarSign },
-  { label: "Crédits", href: "/credits", icon: CreditCard },
-  { label: "Clients", href: "/clients", icon: Users },
-  { label: "Dépenses", href: "/expenses", icon: Receipt },
-  { label: "Rapports", href: "/reports", icon: BarChart3 },
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  perm?: string;
+}
+
+const navItems: NavItem[] = [
+  { label: "Tableau de bord", href: "/", icon: LayoutDashboard, perm: "dashboard" },
+  { label: "Caisse POS", href: "/pos", icon: ShoppingCart, perm: "pos" },
+  { label: "Produits", href: "/products", icon: Package, perm: "products" },
+  { label: "Ventes", href: "/sales", icon: DollarSign, perm: "sales" },
+  { label: "Crédits", href: "/credits", icon: CreditCard, perm: "credits" },
+  { label: "Clients", href: "/clients", icon: Users, perm: "clients" },
+  { label: "Dépenses", href: "/expenses", icon: Receipt, perm: "expenses" },
+  { label: "Rapports", href: "/reports", icon: BarChart3, perm: "reports" },
   { label: "Employés", href: "/employees", icon: Users2 },
-  { label: "Caisse", href: "/cash-register", icon: Calculator },
-  { label: "Facturation", href: "/invoices", icon: BookOpen },
-  { label: "Utilisateurs", href: "/users", icon: UserCog },
-  { label: "Journaux", href: "/logs", icon: ClipboardList },
-  { label: "Paramètres", href: "/settings", icon: Settings },
+  { label: "Caisse", href: "/cash-register", icon: Calculator, perm: "cash_register" },
+  { label: "Facturation", href: "/invoices", icon: BookOpen, perm: "invoices" },
+  { label: "Utilisateurs", href: "/users", icon: UserCog, perm: "users" },
+  { label: "Paramètres", href: "/settings", icon: Settings, perm: "settings" },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { sidebarOpen, toggleSidebar, shopName } = useAppStore();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const [userPerms, setUserPerms] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data } = await supabase.from("users").select("role, perms").eq("id", user.id).single();
+      if (data) {
+        if (data.role === "admin") {
+          const all: Record<string, boolean> = {};
+          navItems.forEach((item) => { if (item.perm) all[item.perm] = true; });
+          setUserPerms(all);
+        } else {
+          setUserPerms(data.perms || {});
+        }
+      }
+    });
+  }, [supabase]);
+
+  const visibleItems = navItems.filter((item) => {
+    if (!item.perm) return true;
+    return userPerms[item.perm] === true;
+  });
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -73,7 +101,7 @@ export function Sidebar() {
 
       <ScrollArea className="flex-1 px-2 py-2">
         <nav className="flex flex-col gap-1">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon;
             const active =
               pathname === item.href ||

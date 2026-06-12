@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useRequirePermission } from "@/lib/use-permission";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +46,7 @@ import {
 import type { CashRegister } from "@/types";
 
 export default function CashRegisterPage() {
+  useRequirePermission("cash_register");
   const [registers, setRegisters] = useState<CashRegister[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
@@ -61,7 +63,7 @@ export default function CashRegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [tab, setTab] = useState("active");
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     getCurrentUser().then((u) => {
@@ -114,8 +116,7 @@ export default function CashRegisterPage() {
 
   const handleClose = async () => {
     if (!currentRegister) return;
-    const valid = await requirePinAction(userId, pinInput, "close_register", "cash_register", currentRegister.id);
-    if (!valid) { setPinError(true); return; }
+    const shopId = await getShopId();
     const diff = actualAmount - (currentRegister.expected_amount || currentRegister.total_sales || 0) - currentRegister.initial_amount;
     const { error: err } = await supabase.from("cash_registers").update({
       closed_at: new Date().toISOString(),
@@ -123,7 +124,7 @@ export default function CashRegisterPage() {
       difference: diff,
       status: "closed",
       note,
-    }).eq("id", currentRegister.id);
+    }).eq("id", currentRegister.id).eq("shop_id", shopId);
     if (err) setError(err.message);
     setCurrentRegister(null);
     setCloseDialog(false);
@@ -321,7 +322,7 @@ export default function CashRegisterPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <Button variant="outline" size="sm" className="w-full">Export PDF</Button>
+                <Button variant="outline" size="sm" className="w-full" onClick={() => window.print()}>Export PDF</Button>
               </CardContent>
             </Card>
           </div>

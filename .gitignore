@@ -42,6 +42,10 @@ next-env.d.ts
 
 .vercel
 
+# electron
+/release
+/dist
+
 # secret files
 next what to add fix remove.txt
 se.txt
@@ -49,3 +53,9 @@ run-sql.mjs
 run-supabase-schema.ps1
 supabase/.temp/
 UPGRADE-REPORT*.md
+
+# electron server build
+/server-dist/
+server-*.log
+server-diag*.log
+/scripts/

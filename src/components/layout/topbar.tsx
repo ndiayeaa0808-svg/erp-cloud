@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { SyncIndicator } from "@/components/pwa/sync-indicator";
 import { Menu, Search, Sun, Moon, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ export function Topbar() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     const load = async () => {
@@ -127,6 +128,7 @@ export function Topbar() {
             </div>
           </PopoverContent>
         </Popover>
+        <SyncIndicator />
         <Button variant="ghost" size="icon" onClick={toggleTheme}>
           {theme === "solarized-dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>

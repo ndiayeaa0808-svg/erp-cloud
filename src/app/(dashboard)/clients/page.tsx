@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useRequirePermission } from "@/lib/use-permission";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,18 +20,33 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { createClient } from "@/lib/supabase/client";
-import { getShopId } from "@/lib/security";
-import { Plus, Search, Users, Pencil } from "lucide-react";
+import { getShopId, getCurrentUser, requirePinAction, logAudit } from "@/lib/security";
+import { Plus, Search, Users, Pencil, Trash2, Lock } from "lucide-react";
 import type { Client } from "@/types";
 
 export default function ClientsPage() {
+  useRequirePermission("clients");
   const [clients, setClients] = useState<Client[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<Partial<Client>>({});
   const [open, setOpen] = useState(false);
-  const supabase = createClient();
+  const [userId, setUserId] = useState("");
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,16 +56,31 @@ export default function ClientsPage() {
     if (search) q = q.ilike("name", `%${search}%`);
     const { data } = await q;
     if (data) setClients(data as Client[]);
+    const user = await getCurrentUser();
+    if (user) setUserId(user.id);
     setLoading(false);
   }, [search, supabase]);
 
   useEffect(() => { load(); }, [load]);
 
+  const handleDeleteClient = async () => {
+    if (!deleteTarget) return;
+    const valid = await requirePinAction(userId, pinInput, "delete_client", "clients", deleteTarget);
+    if (!valid) { setPinError(true); return; }
+    const shopId = await getShopId();
+    const { error } = await supabase.from("clients").delete().eq("id", deleteTarget).eq("shop_id", shopId);
+    if (error) console.error("Delete client error:", error);
+    setDeleteTarget(null);
+    setPinInput("");
+    setPinError(false);
+    load();
+  };
+
   const save = async () => {
     try {
       const shopId = await getShopId();
       if (edit.id) {
-        await supabase.from("clients").update(edit).eq("id", edit.id);
+        await supabase.from("clients").update(edit).eq("id", edit.id).eq("shop_id", shopId);
       } else {
         await supabase.from("clients").insert({ ...edit, id: crypto.randomUUID(), shop_id: shopId });
       }
@@ -92,7 +123,7 @@ export default function ClientsPage() {
               <TableHead>Email</TableHead>
               <TableHead>Dépenses totales</TableHead>
               <TableHead>Points fidélité</TableHead>
-              <TableHead className="w-16">Action</TableHead>
+              <TableHead className="w-24">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -111,15 +142,49 @@ export default function ClientsPage() {
                 <TableCell className="font-medium">{(c.total_spent || 0).toLocaleString()} FCFA</TableCell>
                 <TableCell>{c.loyalty_points || 0}</TableCell>
                 <TableCell>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEdit(c); setOpen(true); }}>
-                    <Pencil className="h-3 w-3" />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEdit(c); setOpen(true); }}>
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400" onClick={() => { setDeleteTarget(c.id); setPinInput(""); setPinError(false); }}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" /> Confirmer la suppression
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Cette action supprimera définitivement ce client. Entrez votre code secret pour confirmer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <Input
+              type="password"
+              placeholder="Code secret"
+              value={pinInput}
+              onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleDeleteClient(); }}
+              maxLength={6}
+              className="text-center text-lg"
+            />
+            {pinError && <p className="text-sm text-red-500 text-center mt-2">Code secret incorrect</p>}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteClient}>Supprimer</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

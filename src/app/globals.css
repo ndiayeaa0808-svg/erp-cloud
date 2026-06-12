@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 
 @custom-variant solarized-light (&:is(.solarized-light *));
 @custom-variant solarized-dark (&:is(.solarized-dark *));
@@ -197,4 +196,57 @@
 .hover-lift:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 25px -6px rgba(0,0,0,0.15);
+}
+
+/* Print: hide UI controls, show only invoice content */
+@media print {
+  .print-hide { display: none !important; }
+  body { background: white !important; color: black !important; }
+  @page { margin: 5mm; size: A5; }
+
+  /* Reset all dialog wrappers so content flows naturally */
+  [data-slot="dialog-portal"],
+  [data-slot="dialog"],
+  [data-slot="dialog-content"] {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    z-index: auto !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  /* Hide the overlay */
+  [data-slot="dialog-overlay"] {
+    display: none !important;
+  }
+
+  /* Invoice content fills page width */
+  .print-full {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .print-full-a5 {
+    max-width: 138mm !important;
+    margin: 0 auto !important;
+  }
+
+  /* Thermal 50mm */
+  .print-thermal {
+    max-width: 48mm !important;
+    margin: 0 auto !important;
+  }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -27,21 +27,19 @@ import {
   LineChart,
   PieChart,
   Activity,
+  RefreshCw,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getShopId } from "@/lib/security";
 import {
-  LineChart as ReLineChart,
   Line,
-  BarChart,
   Bar,
+  ComposedChart,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Area,
-  AreaChart,
 } from "recharts";
 
 type Period = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
@@ -56,7 +54,12 @@ export default function DashboardPage() {
     newClients: 0,
     totalRevenue: 0,
     totalProfit: 0,
-    stockValue: 0,
+    totalExpenses: 0,
+    netProfit: 0,
+      stockValue: 0,
+      potentialSaleValue: 0,
+      stockMargin: 0,
+      creditCollections: 0,
     recentSales: [] as { id: string; client: string; total: number; profit: number; created_at: string; vendor: string }[],
     lowStockProducts: [] as { id: string; name: string; stock: number; threshold: number; photo?: string }[],
     pendingCredits: 0,
@@ -67,120 +70,138 @@ export default function DashboardPage() {
   });
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>("daily");
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString();
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
-    const shopId = await getShopId();
+    setLoading(true);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString();
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+      const shopId = await getShopId();
 
-    const now = new Date();
-    let startDate: Date;
+      const now = new Date();
+      let startDate: Date;
 
-    switch (period) {
-      case "daily":
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
-        break;
-      case "weekly":
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 28);
-        break;
-      case "monthly":
-        startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-        break;
-      case "quarterly":
-        startDate = new Date(now.getFullYear() - 2, 0, 1);
-        break;
-      case "yearly":
-        startDate = new Date(now.getFullYear() - 4, 0, 1);
-        break;
-    }
+      switch (period) {
+        case "daily":
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+          break;
+        case "weekly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 28);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+          break;
+        case "quarterly":
+          startDate = new Date(now.getFullYear() - 2, 0, 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear() - 4, 0, 1);
+          break;
+      }
 
-    const [
-      todaySalesRes,
-      productsRes,
-      clientsRes,
-      allSalesRes,
-      recentSalesRes,
-      lowStockRes,
-      creditsRes,
-      todayExpensesRes,
-      newClientsRes,
-      salesPeriodRes,
-      expensesPeriodRes,
-    ] = await Promise.all([
-      supabase.from("sales").select("total").gte("created_at", todayStr),
-      supabase.from("products").select("id, retail, stock", { count: "exact", head: true }),
-      supabase.from("clients").select("id", { count: "exact", head: true }),
-      supabase.from("sales").select("total, profit, items, payment"),
-      supabase.from("sales").select("id,client,total,profit,created_at,vendor").order("created_at", { ascending: false }).limit(10),
-      supabase.from("products").select("id,name,stock,threshold,photo"),
-      supabase.from("credits").select("total,paid,status").neq("status", "paid"),
-      supabase.from("expenses").select("amount").gte("date", todayStr.split("T")[0]),
-      supabase.from("clients").select("id").gte("created_at", monthStart),
-      supabase.from("sales").select("total, profit, date, created_at").gte("created_at", startDate.toISOString()),
-      supabase.from("expenses").select("amount, date").gte("date", startDate.toISOString().split("T")[0]),
-    ]);
-
+      const [todaySalesRes, productsRes, clientsRes, allSalesRes, recentSalesRes, lowStockRes, creditsRes, todayExpensesRes, newClientsRes, salesPeriodRes, expensesPeriodRes, creditCollectionsRes] = await Promise.all([
+        supabase.from("sales").select("total, profit").is("deleted_at", null).eq("shop_id", shopId).gte("created_at", todayStr),
+        supabase.from("products").select("id, retail, cost, stock", { count: "exact" }).is("deleted_at", null).eq("shop_id", shopId),
+        supabase.from("clients").select("id", { count: "exact", head: true }).eq("shop_id", shopId),
+        supabase.from("sales").select("total, profit, items, payment").is("deleted_at", null).eq("shop_id", shopId),
+        supabase.from("sales").select("id,client,total,profit,created_at,vendor").is("deleted_at", null).eq("shop_id", shopId).order("created_at", { ascending: false }).limit(10),
+        supabase.from("products").select("id,name,stock,threshold,photo").is("deleted_at", null).eq("shop_id", shopId),
+        supabase.from("credits").select("total,paid,status").eq("shop_id", shopId).neq("status", "paid"),
+        supabase.from("expenses").select("amount, date").eq("shop_id", shopId).gte("date", todayStr.split("T")[0]),
+        supabase.from("clients").select("id").eq("shop_id", shopId).gte("created_at", monthStart),
+        supabase.from("sales").select("total, profit, date, created_at").is("deleted_at", null).eq("shop_id", shopId).gte("created_at", startDate.toISOString()),
+        supabase.from("expenses").select("amount, date").eq("shop_id", shopId).gte("date", startDate.toISOString().split("T")[0]),
+        supabase.from("credits").select("paid").eq("shop_id", shopId),
+      ]);
+    
     const periodLabel: string[] = [];
+    const todaySales = todaySalesRes.data || [];
+    const todaySalesTotal = todaySales.reduce((s: number, r: { total?: number }) => s + (r.total || 0), 0);
+    const todaySalesProfit = todaySales.reduce((s: number, r: { profit?: number }) => s + (r.profit || 0), 0);
+    const todayExpensesTotal = (todayExpensesRes.data || []).reduce((s: number, r: { amount?: number }) => s + (r.amount || 0), 0);
+
     const allProducts = lowStockRes.data || [];
     const lowStockData = allProducts.filter((p: { stock: number; threshold: number }) => (p.stock || 0) < (p.threshold || 10));
 
     const allSales = allSalesRes.data || [];
     const topProductsMap = new Map<string, { name: string; total: number; count: number }>();
     for (const sale of allSales) {
-      if (sale.items && Array.isArray(sale.items)) {
-        for (const item of sale.items) {
-          const existing = topProductsMap.get(item.product_name) || { name: item.product_name, total: 0, count: 0 };
-          existing.total += item.total || 0;
-          existing.count += item.qty || 0;
-          topProductsMap.set(item.product_name, existing);
-        }
+      if (sale.items && Array.isArray(sale.items)) for (const item of sale.items) {
+        const existing = topProductsMap.get(item.product_name) || { name: item.product_name, total: 0, count: 0 };
+        existing.total += item.total || 0;
+        existing.count += item.qty || 0;
+        topProductsMap.set(item.product_name, existing);
       }
     }
     const topProducts = Array.from(topProductsMap.values()).sort((a, b) => b.total - a.total).slice(0, 5);
 
-    const stockValue = (productsRes.data || []).reduce((s: number, p: { retail?: number; stock?: number }) => s + ((p.retail || 0) * (p.stock || 0)), 0);
+    const stockValue = (productsRes.data || []).reduce((s: number, p: { cost?: number; stock?: number }) => s + ((p.cost || 0) * (p.stock || 0)), 0);
+    const potentialSaleValue = (productsRes.data || []).reduce((s: number, p: { retail?: number; stock?: number }) => s + ((p.retail || 0) * (p.stock || 0)), 0);
+    const stockMargin = potentialSaleValue - stockValue;
 
-    const totalProfit = allSales.reduce((s: number, r: { profit?: number }) => s + (r.profit || 0), 0);
-
-    const paymentCounts: Record<string, { count: number; total: number }> = {};
-    for (const sale of allSales) {
-      const method = sale.payment || "especes";
-      if (!paymentCounts[method]) paymentCounts[method] = { count: 0, total: 0 };
-      paymentCounts[method].count++;
-      paymentCounts[method].total += sale.total || 0;
-    }
-    const paymentBreakdown = Object.entries(paymentCounts).map(([name, val]) => ({ name, value: val.total }));
+    const paymentBreakdown = Object.entries(
+      allSales.reduce((acc: Record<string, { count: number; total: number }>, sale: { payment?: string; total?: number }) => {
+        const method = sale.payment || "especes";
+        if (!acc[method]) acc[method] = { count: 0, total: 0 };
+        acc[method].count++;
+        acc[method].total += sale.total || 0;
+        return acc;
+      }, {})
+    ).map(([name, val]) => ({ name, value: val.total }));
 
     const salesPeriod = salesPeriodRes.data || [];
     const expensesPeriod = expensesPeriodRes.data || [];
-
     const revenueByPeriod = buildPeriodData(salesPeriod, expensesPeriod, period, startDate, periodLabel);
 
+    const isToday = period === "daily";
+    const totalRevenue = isToday ? todaySalesTotal : salesPeriod.reduce((s: number, r: { total?: number }) => s + (r.total || 0), 0);
+    const totalProfit = isToday ? todaySalesProfit : salesPeriod.reduce((s: number, r: { profit?: number }) => s + (r.profit || 0), 0);
+    const totalExpenses = isToday ? todayExpensesTotal : expensesPeriod.reduce((s: number, r: { amount?: number }) => s + (r.amount || 0), 0);
+    const periodSalesCount = isToday ? todaySales.length : salesPeriod.length;
+
     setData({
-      todaySales: (todaySalesRes.data || []).reduce((s: number, r: { total?: number }) => s + (r.total || 0), 0),
-      todaySalesCount: (todaySalesRes.data || []).length,
+      todaySales: todaySalesTotal,
+      todaySalesCount: periodSalesCount,
       productsCount: productsRes.count || 0,
       lowStock: lowStockData.length,
       clientsCount: clientsRes.count || 0,
       newClients: (newClientsRes.data || []).length,
-      totalRevenue: allSales.reduce((s: number, r: { total?: number }) => s + (r.total || 0), 0),
+      totalRevenue,
       totalProfit,
+      totalExpenses,
+      netProfit: totalProfit - totalExpenses,
       stockValue,
+      potentialSaleValue,
+      stockMargin,
+      creditCollections: (creditCollectionsRes.data || []).reduce((s: number, c: { paid?: number }) => s + (c.paid || 0), 0),
       recentSales: (recentSalesRes.data || []) as typeof data.recentSales,
       lowStockProducts: lowStockData as typeof data.lowStockProducts,
       pendingCredits: (creditsRes.data || []).reduce((s: number, c: { total?: number; paid?: number }) => s + ((c.total || 0) - (c.paid || 0)), 0),
-      todayExpenses: (todayExpensesRes.data || []).reduce((s: number, r: { amount?: number }) => s + (r.amount || 0), 0),
+      todayExpenses: todayExpensesTotal,
       topProducts,
       revenueByPeriod,
       paymentBreakdown,
     });
+    } catch (err) {
+      console.error("Dashboard load error:", err);
+    }
     setLoading(false);
   }, [period, supabase]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const refresh = () => load();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+    const interval = setInterval(refresh, 30000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      clearInterval(interval);
+    };
+  }, [load]);
 
   function buildPeriodData(
     sales: { total?: number; profit?: number; date?: string; created_at?: string }[],
@@ -326,11 +347,13 @@ export default function DashboardPage() {
 
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Chargement...</div>;
 
+  const periodLabel = period === "daily" ? "aujourd'hui" : period === "weekly" ? "cette semaine" : period === "monthly" ? "ce mois" : period === "quarterly" ? "ce trimestre" : "cette année";
+  const stockLabel = "Stock (coût)";
   const stats = [
-    { label: "Ventes du jour", value: `${data.todaySales.toLocaleString()} FCFA`, change: `${data.todaySalesCount} vente(s)`, trend: data.todaySales > 0 ? "up" : "neutral", icon: ShoppingCart },
-    { label: "Produits en stock", value: `${data.productsCount}`, change: `${data.lowStock} en alerte`, trend: data.lowStock > 0 ? "down" : "up", icon: Package },
-    { label: "Valeur du stock", value: `${data.stockValue.toLocaleString()} FCFA`, change: `${data.productsCount} produits`, trend: "up", icon: Store },
-    { label: "Chiffre d'affaires", value: `${data.totalRevenue.toLocaleString()} FCFA`, change: `Bénéfice: ${data.totalProfit.toLocaleString()} FCFA`, trend: "up", icon: DollarSign },
+    { label: stockLabel, value: `${data.stockValue.toLocaleString()} FCFA`, change: `${data.productsCount} produits`, trend: data.stockValue > 0 ? "up" : "neutral", icon: Package },
+    { label: `Ventes ${periodLabel}`, value: `${data.totalRevenue.toLocaleString()} FCFA`, change: `${data.todaySalesCount} vente(s)`, trend: data.totalRevenue > 0 ? "up" : "neutral", icon: ShoppingCart },
+    { label: `Bénéfices ${periodLabel}`, value: `${data.totalProfit.toLocaleString()} FCFA`, change: `Marge: ${data.totalRevenue > 0 ? ((data.totalProfit / data.totalRevenue) * 100).toFixed(1) : 0}%`, trend: data.totalProfit > 0 ? "up" : "down", icon: TrendingUp },
+    { label: `Dépenses ${periodLabel}`, value: `${data.totalExpenses.toLocaleString()} FCFA`, change: `Net: ${data.netProfit.toLocaleString()} FCFA`, trend: data.totalExpenses > 0 ? data.netProfit >= 0 ? "up" : "down" : "neutral", icon: Receipt },
   ];
 
   return (
@@ -342,18 +365,23 @@ export default function DashboardPage() {
             {today.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>
         </div>
-        <div className="flex rounded-lg border p-0.5">
-          {(["daily", "weekly", "monthly", "quarterly", "yearly"] as Period[]).map((p) => (
-            <Button
-              key={p}
-              variant={period === p ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 text-xs capitalize"
-              onClick={() => setPeriod(p)}
-            >
-              {p === "daily" ? "Jour" : p === "weekly" ? "Semaine" : p === "monthly" ? "Mois" : p === "quarterly" ? "Trimestre" : "Année"}
-            </Button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border p-0.5">
+            {(["daily", "weekly", "monthly", "quarterly", "yearly"] as Period[]).map((p) => (
+              <Button
+                key={p}
+                variant={period === p ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 text-xs capitalize"
+                onClick={() => setPeriod(p)}
+              >
+                {p === "daily" ? "Jour" : p === "weekly" ? "Semaine" : p === "monthly" ? "Mois" : p === "quarterly" ? "Trimestre" : "Année"}
+              </Button>
+            ))}
+          </div>
+          <Button variant="outline" size="sm" className="h-7" onClick={() => load()} title="Rafraîchir">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 
@@ -403,26 +431,44 @@ export default function DashboardPage() {
             {data.revenueByPeriod.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">Aucune donnée pour cette période</div>
             ) : (
-              <ResponsiveContainer width="100%" height={250}>
-                <AreaChart data={data.revenueByPeriod}>
-                  <defs>
-                    <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.1} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: "var(--card)", border: "1px solid var(--border)", borderRadius: "8px" }}
-                    formatter={(value) => `${Number(value).toLocaleString()} FCFA`}
-                  />
-                  <Area type="monotone" dataKey="revenue" stroke="#f59e0b" fill="url(#revenueGrad)" name="Revenus" strokeWidth={2} />
-                  <Line type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2} name="Bénéfices" />
-                  <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} name="Dépenses" />
-                </AreaChart>
-              </ResponsiveContainer>
+              <>
+                <div className="flex flex-wrap gap-4 mb-4 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-amber-500" />
+                    <span className="text-muted-foreground">Revenus</span>
+                    <span className="font-bold">{data.revenueByPeriod.reduce((s, r) => s + r.revenue, 0).toLocaleString()} FCFA</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-emerald-500" />
+                    <span className="text-muted-foreground">Bénéfices</span>
+                    <span className="font-bold">{data.revenueByPeriod.reduce((s, r) => s + r.profit, 0).toLocaleString()} FCFA</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-red-500" />
+                    <span className="text-muted-foreground">Dépenses</span>
+                    <span className="font-bold">{data.revenueByPeriod.reduce((s, r) => s + r.expenses, 0).toLocaleString()} FCFA</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={280}>
+                  <ComposedChart data={data.revenueByPeriod} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.08} vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "var(--card)", border: "1px solid var(--border)", borderRadius: "8px", fontSize: "12px" }}
+                      formatter={(value, name) => [
+                        `${Number(value).toLocaleString()} FCFA`,
+                        name === "revenue" ? "Revenus" : name === "profit" ? "Bénéfices" : "Dépenses"
+                      ]}
+                      labelFormatter={(label) => `Période: ${label}`}
+                    />
+                    <Bar dataKey="expenses" fill="#ef4444" radius={[3, 3, 0, 0]} name="expenses" maxBarSize={20} opacity={0.7} />
+                    <Bar dataKey="profit" fill="#10b981" radius={[3, 3, 0, 0]} name="profit" maxBarSize={20} opacity={0.8} />
+                    <Bar dataKey="revenue" fill="#f59e0b" radius={[3, 3, 0, 0]} name="revenue" maxBarSize={20} opacity={0.9} />
+                    <Line type="monotone" dataKey="revenue" stroke="#f59e0b" strokeWidth={2.5} name="revenue" dot={{ r: 3, fill: "#f59e0b", strokeWidth: 0 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </>
             )}
           </CardContent>
         </Card>
@@ -475,15 +521,25 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 stagger-children">
-        <Card className="hover-lift hover:border-red-500/30">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 stagger-children">
+        <Card className="hover-lift hover:border-amber-500/30">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Dépenses du jour</CardTitle>
-            <Receipt className="h-4 w-4 text-red-400" />
+            <CardTitle className="text-sm font-medium">Vente potentielle</CardTitle>
+            <Store className="h-4 w-4 text-amber-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-500">{data.todayExpenses.toLocaleString()} FCFA</div>
-            <p className="text-xs text-muted-foreground mt-1">Charges quotidiennes</p>
+            <div className="text-2xl font-bold">{data.potentialSaleValue.toLocaleString()} FCFA</div>
+            <p className="text-xs text-muted-foreground mt-1">Valeur stock au prix détail</p>
+          </CardContent>
+        </Card>
+        <Card className="hover-lift hover:border-emerald-500/30">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Marge potentielle</CardTitle>
+            <TrendingUp className="h-4 w-4 text-emerald-400" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-emerald-500">{data.stockMargin.toLocaleString()} FCFA</div>
+            <p className="text-xs text-muted-foreground mt-1">{data.potentialSaleValue > 0 ? `Taux: ${((data.stockMargin / data.potentialSaleValue) * 100).toFixed(1)}%` : ""}</p>
           </CardContent>
         </Card>
         <Card className="hover-lift hover:border-yellow-500/30">
@@ -496,22 +552,20 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground mt-1">À recouvrer</p>
           </CardContent>
         </Card>
-        <Card className="hover-lift hover:border-emerald-500/30">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Résultat net du jour</CardTitle>
-            <TrendingUp className="h-4 w-4 text-emerald-400" />
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold ${data.todaySales - data.todayExpenses >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-              {(data.todaySales - data.todayExpenses).toLocaleString()} FCFA
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Ventes - Dépenses</p>
-          </CardContent>
-        </Card>
         <Card className="hover-lift hover:border-blue-500/30">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Crédits recouvrés</CardTitle>
+            <CreditCard className="h-4 w-4 text-blue-400" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-500">{data.creditCollections.toLocaleString()} FCFA</div>
+            <p className="text-xs text-muted-foreground mt-1">Total encaissé</p>
+          </CardContent>
+        </Card>
+        <Card className="hover-lift hover:border-purple-500/30">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Top produits</CardTitle>
-            <BarChart3 className="h-4 w-4 text-blue-400" />
+            <BarChart3 className="h-4 w-4 text-purple-400" />
           </CardHeader>
           <CardContent>
             {data.topProducts.length === 0 ? (

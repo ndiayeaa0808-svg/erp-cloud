@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useRequirePermission } from "@/lib/use-permission";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -40,6 +51,7 @@ import {
   Pencil,
   Ban,
   CheckCheck,
+  Trash2,
 } from "lucide-react";
 
 interface AppUser {
@@ -61,6 +73,7 @@ const ROLES = [
 ];
 
 const DEFAULT_PERMS: Record<string, boolean> = {
+  dashboard: true,
   pos: false,
   products: false,
   products_edit: false,
@@ -77,17 +90,18 @@ const DEFAULT_PERMS: Record<string, boolean> = {
   users: false,
   users_edit: false,
   settings: false,
-  logs: false,
+  employees: false,
 };
 
 const ROLE_PERMS: Record<string, Record<string, boolean>> = {
   admin: Object.fromEntries(Object.keys(DEFAULT_PERMS).map((k) => [k, true])),
   caissier: { pos: true, products: true, sales: true, clients: true, cash_register: true, invoices: true, credits: true },
   gestionnaire_stock: { products: true, products_edit: true, reports: true, expenses: true },
-  comptable: { sales: true, credits: true, reports: true, clients: true, expenses: true, cash_register: true, invoices: true, logs: true },
+  comptable: { sales: true, credits: true, reports: true, clients: true, expenses: true, cash_register: true, invoices: true, employees: true },
 };
 
 export default function UsersPage() {
+  useRequirePermission("users");
   const [users, setUsers] = useState<AppUser[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -96,7 +110,8 @@ export default function UsersPage() {
   const [edit, setEdit] = useState<Partial<AppUser>>({});
   const [open, setOpen] = useState(false);
   const [selectedPerms, setSelectedPerms] = useState<Record<string, boolean>>({});
-  const supabase = createClient();
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,35 +163,22 @@ export default function UsersPage() {
           role: edit.role,
           perms: selectedPerms,
           is_blocked: edit.is_blocked,
-        }).eq("id", edit.id);
+        }).eq("id", edit.id).eq("shop_id", shopId);
       } else {
-        const userId = crypto.randomUUID();
-        const { error: authErr } = await supabase.from("users").insert({
-          id: userId,
-          shop_id: shopId,
-          name: edit.name,
-          login: edit.login,
-          email: edit.email || `${edit.login}@boutique.local`,
-          role: edit.role || "caissier",
-          perms: selectedPerms,
-          pin: "0000",
+        const res = await fetch("/api/users/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            login: edit.login,
+            password: initPassword || "123456",
+            name: edit.name,
+            role: edit.role || "caissier",
+            shopId,
+            perms: selectedPerms,
+          }),
         });
-        if (authErr) throw authErr;
-        try {
-          await fetch("/api/users/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: edit.email || `${edit.login}@boutique.local`,
-              password: initPassword || "123456",
-              login: edit.login,
-              name: edit.name,
-              shopId,
-            }),
-          });
-        } catch {
-          // Auth creation is optional - user can still login via DB
-        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur création");
       }
       setOpen(false);
       setEdit({});
@@ -189,11 +191,23 @@ export default function UsersPage() {
   };
 
   const toggleBlock = async (userId: string, blocked: boolean) => {
-    await supabase.from("users").update({ is_blocked: blocked }).eq("id", userId);
+    const shopId = await getShopId();
+    await supabase.from("users").update({ is_blocked: blocked }).eq("id", userId).eq("shop_id", shopId);
+    load();
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return;
+    const shopId = await getShopId();
+    await supabase.from("cash_registers").update({ status: "closed", closed_at: new Date().toISOString(), note: "Utilisateur supprimé" }).eq("shop_id", shopId).eq("user_id", deleteTarget).eq("status", "open");
+    const { error } = await supabase.from("users").delete().eq("id", deleteTarget).eq("shop_id", shopId);
+    if (error) console.error("Delete user error:", error);
+    setDeleteTarget(null);
     load();
   };
 
   const permissionLabels: Record<string, string> = {
+    dashboard: "Tableau de bord",
     pos: "Caisse POS",
     products: "Voir produits",
     products_edit: "Modifier produits",
@@ -210,7 +224,7 @@ export default function UsersPage() {
     users: "Voir utilisateurs",
     users_edit: "Modifier utilisateurs",
     settings: "Paramètres",
-    logs: "Journaux",
+    employees: "Employés",
   };
 
   return (
@@ -346,6 +360,9 @@ export default function UsersPage() {
                     >
                       {u.is_blocked ? <CheckCheck className="h-3 w-3" /> : <Ban className="h-3 w-3" />}
                     </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400" onClick={() => setDeleteTarget(u.id)}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
                   </div>
                 </TableCell>
               </TableRow>
@@ -353,6 +370,23 @@ export default function UsersPage() {
           </TableBody>
         </Table>
       </div>
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Lock className="h-4 w-4" /> Confirmer la suppression
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Cette action supprimera définitivement cet utilisateur. Cette action est irréversible.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteUser}>Supprimer</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
