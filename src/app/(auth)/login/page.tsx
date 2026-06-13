@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasValidConfig, getSupabaseConfig, storeConfig } from "@/lib/supabase/config";
 import { isOnlineSync } from "@/lib/is-online";
 import { cacheSession, hasValidCachedSession } from "@/lib/offline-auth";
+import { refreshCache } from "@/lib/sync/sync";
 
 export default function LoginPage() {
   const [configured, setConfigured] = useState(false);
@@ -112,6 +113,7 @@ export default function LoginPage() {
         });
       }
 
+      refreshCache();
       window.location.href = "/";
     } catch {
       setError("Erreur de connexion au serveur");
